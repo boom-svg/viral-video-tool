@@ -653,6 +653,10 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
         import tempfile
         import os
         import subprocess
+        import shutil
+        
+        # 检查ffmpeg是否可用
+        ffmpeg_available = shutil.which('ffmpeg') is not None
         
         # 获取文件扩展名
         ext = filename.split('.')[-1].lower()
@@ -666,37 +670,58 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
         audio_path = original_path
         
         try:
-            # 如果是视频文件，先用ffmpeg提取音频
+            # 如果是视频文件，尝试提取音频
             if ext in video_exts:
                 print(f"检测到视频文件，正在提取音频...")
-                # 输出为MP3
-                audio_path = original_path + '.mp3'
                 
-                # 使用ffmpeg提取音频
-                cmd = [
-                    'ffmpeg', '-i', original_path,
-                    '-vn', '-acodec', 'libmp3lame',
-                    '-ab', '192k', '-ar', '16000',
-                    '-ac', '1', '-y', audio_path
-                ]
-                result = subprocess.run(cmd, capture_output=True, timeout=120)
-                
-                if result.returncode != 0:
-                    # 如果MP3失败，尝试WAV
-                    audio_path = original_path + '.wav'
+                if not ffmpeg_available:
+                    # ffmpeg不可用，尝试使用moviepy
+                    try:
+                        from moviepy.editor import VideoFileClip
+                        import numpy as np
+                        
+                        # 使用moviepy提取音频
+                        video = VideoFileClip(original_path)
+                        audio = video.audio
+                        audio_path = original_path.replace(f'.{ext}', '.wav')
+                        audio.write_audiofile(audio_path, codec='pcm_s16le', verbose=False, logger=None)
+                        audio.close()
+                        video.close()
+                        print(f"使用moviepy提取音频成功: {audio_path}")
+                    except Exception as moviepy_error:
+                        print(f"moviepy提取失败: {moviepy_error}")
+                        return {
+                            'success': False,
+                            'error': f"视频转写需要安装ffmpeg，请在本地环境使用或安装ffmpeg。当前仅支持音频文件(mp3/wav/m4a)直接转写。",
+                            'filename': filename
+                        }
+                else:
+                    # ffmpeg可用，使用它提取音频
+                    audio_path = original_path + '.mp3'
                     cmd = [
                         'ffmpeg', '-i', original_path,
-                        '-vn', '-acodec', 'pcm_s16le',
-                        '-ar', '16000', '-ac', '1', '-y', audio_path
+                        '-vn', '-acodec', 'libmp3lame',
+                        '-ab', '192k', '-ar', '16000',
+                        '-ac', '1', '-y', audio_path
                     ]
                     result = subprocess.run(cmd, capture_output=True, timeout=120)
-                
-                if result.returncode != 0:
-                    return {
-                        'success': False,
-                        'error': f"音频提取失败: {result.stderr.decode()[:200]}",
-                        'filename': filename
-                    }
+                    
+                    if result.returncode != 0:
+                        # 如果MP3失败，尝试WAV
+                        audio_path = original_path + '.wav'
+                        cmd = [
+                            'ffmpeg', '-i', original_path,
+                            '-vn', '-acodec', 'pcm_s16le',
+                            '-ar', '16000', '-ac', '1', '-y', audio_path
+                        ]
+                        result = subprocess.run(cmd, capture_output=True, timeout=120)
+                    
+                    if result.returncode != 0:
+                        return {
+                            'success': False,
+                            'error': f"音频提取失败: {result.stderr.decode()[:200]}",
+                            'filename': filename
+                        }
                 
                 print(f"音频提取完成: {audio_path}")
                 filename = os.path.basename(audio_path)
