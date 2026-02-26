@@ -1,0 +1,16 @@
+# 爆款视频内容复刻辅助工具 - 依赖列表
+
+# Web框架
+streamlit>=1.28.0
+
+# AI API客户端
+openai>=1.3.0
+
+# HTTP请求
+requests>=2.31.0
+
+# 数据处理
+pandas>=2.0.0
+
+# 文件处理
+python-multipart>=0.0.6
