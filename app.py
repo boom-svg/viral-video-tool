@@ -810,7 +810,7 @@ def render_file_uploader():
                     file_data = file.read()
                     
                     # 转写
-                    result = transcribe_with_openai_client(file_data, file.name, client)
+                    result = transcribe_audio(file_data, file.name, client)
                     
                     if result['success']:
                         st.session_state.transcripts[file_id] = {
