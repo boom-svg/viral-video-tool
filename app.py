@@ -648,113 +648,57 @@ def get_dmxclient():
 
 
 def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
-    """使用DMXAPI Whisper转写音频（支持从视频提取音频）"""
+    """使用DMXAPI Whisper转写音频（仅支持音频文件）"""
     try:
         import tempfile
         import os
-        import subprocess
-        import shutil
-        
-        # 检查ffmpeg是否可用
-        ffmpeg_available = shutil.which('ffmpeg') is not None
         
         # 获取文件扩展名
         ext = filename.split('.')[-1].lower()
-        video_exts = ['mp4', 'mov', 'avi', 'mkv', 'webm']
+        
+        # 检查是否为支持的音频格式
+        audio_exts = ['mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg']
+        if ext not in audio_exts:
+            return {
+                'success': False,
+                'error': f"不支持的文件格式: {ext}。请上传MP3、WAV、M4A等音频文件。",
+                'filename': filename
+            }
         
         # 创建临时文件
         with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
             tmp.write(file_data)
-            original_path = tmp.name
-        
-        audio_path = original_path
+            audio_path = tmp.name
         
         try:
-            # 如果是视频文件，尝试提取音频
-            if ext in video_exts:
-                print(f"检测到视频文件，正在提取音频...")
-                
-                if not ffmpeg_available:
-                    # ffmpeg不可用，尝试使用moviepy
-                    try:
-                        from moviepy.editor import VideoFileClip
-                        import numpy as np
-                        
-                        # 使用moviepy提取音频
-                        video = VideoFileClip(original_path)
-                        audio = video.audio
-                        audio_path = original_path.replace(f'.{ext}', '.wav')
-                        audio.write_audiofile(audio_path, codec='pcm_s16le', verbose=False, logger=None)
-                        audio.close()
-                        video.close()
-                        print(f"使用moviepy提取音频成功: {audio_path}")
-                    except Exception as moviepy_error:
-                        print(f"moviepy提取失败: {moviepy_error}")
-                        return {
-                            'success': False,
-                            'error': f"视频转写需要安装ffmpeg，请在本地环境使用或安装ffmpeg。当前仅支持音频文件(mp3/wav/m4a)直接转写。",
-                            'filename': filename
-                        }
-                else:
-                    # ffmpeg可用，使用它提取音频
-                    audio_path = original_path + '.mp3'
-                    cmd = [
-                        'ffmpeg', '-i', original_path,
-                        '-vn', '-acodec', 'libmp3lame',
-                        '-ab', '192k', '-ar', '16000',
-                        '-ac', '1', '-y', audio_path
-                    ]
-                    result = subprocess.run(cmd, capture_output=True, timeout=120)
-                    
-                    if result.returncode != 0:
-                        # 如果MP3失败，尝试WAV
-                        audio_path = original_path + '.wav'
-                        cmd = [
-                            'ffmpeg', '-i', original_path,
-                            '-vn', '-acodec', 'pcm_s16le',
-                            '-ar', '16000', '-ac', '1', '-y', audio_path
-                        ]
-                        result = subprocess.run(cmd, capture_output=True, timeout=120)
-                    
-                    if result.returncode != 0:
-                        return {
-                            'success': False,
-                            'error': f"音频提取失败: {result.stderr.decode()[:200]}",
-                            'filename': filename
-                        }
-                
-                print(f"音频提取完成: {audio_path}")
-                filename = os.path.basename(audio_path)
+            filename_only = os.path.basename(audio_path)
             
-            # 决定MIME类型
-            audio_ext = audio_path.split('.')[-1].lower()
+            # MIME类型映射
             mime_types = {
                 'mp3': 'audio/mpeg',
                 'wav': 'audio/wav',
                 'm4a': 'audio/mp4',
-                'flac': 'audio/flac'
+                'flac': 'audio/flac',
+                'aac': 'audio/aac',
+                'ogg': 'audio/ogg'
             }
-            mime_type = mime_types.get(audio_ext, 'audio/mpeg')
+            mime_type = mime_types.get(ext, 'audio/mpeg')
             
-            # 调用Whisper API转写 - 使用轻量模型加速
-            # 优化：使用更快的小模型
+            # 调用Whisper API转写
             url = f"{DMXAPI_BASE_URL}/audio/transcriptions"
             
-            # 尝试使用更轻量的模型
+            # 尝试不同模型
             model_options = [
-                'gpt-4o-mini-transcribe',  # 首选：最快
-                'gpt-4o-transcribe',        # 备选
-                'whisper-1'                 # 备用
+                'gpt-4o-mini-transcribe',
+                'gpt-4o-transcribe',
+                'whisper-1'
             ]
-            
-            success = False
-            last_error = ""
             
             for model_name in model_options:
                 try:
                     with open(audio_path, 'rb') as f:
                         files = {
-                            'file': (filename, f, mime_type),
+                            'file': (filename_only, f, mime_type),
                             'model': (None, model_name)
                         }
                         headers = {'Authorization': f'Bearer {st.session_state.api_key}'}
@@ -765,144 +709,46 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
                         print(f"转写成功，使用模型: {model_name}")
                         return {'success': True, 'text': result.get('text', ''), 'filename': filename, 'model': model_name}
                     elif response.status_code == 400:
-                        # 模型不支持，尝试下一个
-                        last_error = f"模型 {model_name} 不支持"
                         continue
                     else:
-                        last_error = f"API错误 {response.status_code}"
-                        break
+                        return {'success': False, 'error': f"API错误 {response.status_code}: {response.text[:200]}", 'filename': filename}
                 except Exception as e:
-                    last_error = str(e)
                     continue
             
-            return {'success': False, 'error': f"所有模型都失败: {last_error}", 'filename': filename}
+            return {'success': False, 'error': "所有模型都失败，请检查API密钥是否正确", 'filename': filename}
                 
         finally:
-            # 清理临时文件
             try:
-                os.unlink(original_path)
-                if audio_path != original_path:
-                    os.unlink(audio_path)
+                os.unlink(audio_path)
             except:
                 pass
-                
+            
     except Exception as e:
         return {'success': False, 'error': str(e), 'filename': filename}
 
 
-def transcribe_with_openai_client(file_data: bytes, filename: str, client) -> dict:
-    """使用OpenAI客户端方式转写 - 优化版"""
-    try:
-        import tempfile
-        import os
-        import subprocess
-        
-        # 获取文件扩展名
-        ext = filename.split('.')[-1].lower()
-        video_exts = ['mp4', 'mov', 'avi', 'mkv', 'webm']
-        
-        # 创建临时文件
-        if ext in video_exts:
-            # 视频文件：先提取音频并压缩
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
-                tmp.write(file_data)
-                original_path = tmp.name
-            
-            # 输出为压缩后的MP3
-            audio_path = original_path + '.mp3'
-            
-            # 优化的FFmpeg命令：大幅压缩
-            cmd = [
-                'ffmpeg', '-i', original_path,
-                '-vn',  # 不处理视频
-                '-acodec', 'libmp3lame',  # MP3编码
-                '-q:a', '9',  # 低质量压缩（语音足够）
-                '-ac', '1',  # 单声道
-                '-ar', '16000',  # 16kHz采样率
-                '-y', audio_path
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, timeout=60)
-            
-            if result.returncode != 0:
-                # 备用方案：使用WAV
-                audio_path = original_path + '.wav'
-                cmd = [
-                    'ffmpeg', '-i', original_path,
-                    '-vn', '-acodec', 'pcm_s16le',
-                    '-ar', '16000', '-ac', '1', '-y', audio_path
-                ]
-                subprocess.run(cmd, capture_output=True, timeout=60)
-            
-            tmp_path = audio_path
-        else:
-            # 音频文件：直接压缩
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
-                tmp.write(file_data)
-                original_path = tmp.name
-            
-            # 输出为压缩MP3
-            audio_path = original_path + '.mp3'
-            
-            cmd = [
-                'ffmpeg', '-i', original_path,
-                '-vn', '-acodec', 'libmp3lame',
-                '-q:a', '9', '-ac', '1', '-ar', '16000', '-y', audio_path
-            ]
-            subprocess.run(cmd, capture_output=True, timeout=30)
-            tmp_path = audio_path
-        
-        try:
-            # 使用轻量级Whisper模型转写
-            with open(tmp_path, 'rb') as audio_file:
-                transcript = client.audio.transcriptions.create(
-                    model="whisper-1",  # Whisper基础模型，已足够快
-                    file=audio_file,
-                    language="zh"  # 指定可加速
-                )
-            
-            return {
-                'success': True,
-                'text': transcript.text,
-                'filename': filename,
-                'model': 'whisper-1'
-            }
-        finally:
-            # 清理临时文件
-            try:
-                os.unlink(original_path)
-                if 'audio_path' in locals() and audio_path != original_path:
-                    os.unlink(audio_path)
-            except:
-                pass
-            
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'filename': filename
-        }
+def render_file_uploader():
+    """渲染文件上传器"""
+    st.subheader("📤 上传参考素材")
 
 
 def render_file_uploader():
     """渲染文件上传器"""
     st.subheader("📤 上传参考素材")
     
-    # 支持的文件类型
+    # 支持的文件类型 - 只支持音频文件，避免ffmpeg依赖
     accepted_types = [
         "audio/mpeg",      # .mp3
         "audio/wav",       # .wav
         "audio/mp4",      # .m4a
-        "video/mp4",      # .mp4
-        "video/mov",      # .mov
         "audio/x-m4a",    # .m4a
     ]
     
     uploaded_files = st.file_uploader(
-        "选择视频或音频文件（支持多个文件）",
-        type=['mp3', 'wav', 'm4a', 'mp4', 'mov', 'avi'],
+        "选择音频文件（支持多个文件）",
+        type=['mp3', 'wav', 'm4a'],
         accept_multiple_files=True,
-        help="支持MP3、WAV、M4A音频和MP4、MOV视频格式"
+        help="支持MP3、WAV、M4A音频格式。视频文件请先用其他工具转换为音频后再上传。"
     )
     
     if uploaded_files:
