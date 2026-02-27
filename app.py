@@ -633,7 +633,6 @@ def compress_audio(audio_path: str, max_size_mb: float = 2.0) -> str:
         压缩后的音频文件路径
     """
     import os
-    from pydub import AudioSegment
     
     # 获取文件大小
     file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
@@ -643,6 +642,13 @@ def compress_audio(audio_path: str, max_size_mb: float = 2.0) -> str:
         return audio_path
     
     print(f"原始文件大小: {file_size_mb:.2f}MB，开始压缩...")
+    
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        # pydub不可用，跳过压缩
+        print("pydub不可用，跳过压缩")
+        return audio_path
     
     try:
         # 加载音频
