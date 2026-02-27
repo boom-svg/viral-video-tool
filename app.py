@@ -305,6 +305,23 @@ background: rgba(77,107,254,0.1);
         font-weight: 500 !important;
     }
     
+    /* 展开器标题修复 - 确保深色文字 */
+    .streamlit-expanderHeader {
+        background: var(--bg-card) !important;
+        border-radius: 8px !important;
+        color: #e5e7eb !important;
+        font-weight: 600 !important;
+    }
+    
+    .streamlit-expanderHeader:hover {
+        background: #252a30 !important;
+    }
+    
+    /* 展开器箭头颜色 */
+    .streamlit-expanderHeader svg {
+        fill: #9ca3af !important;
+    }
+    
     /* 进度条 */
     .stProgress > div > div > div {
         background: var(--accent-gradient) !important;
