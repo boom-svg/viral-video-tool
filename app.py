@@ -640,12 +640,19 @@ def render_sidebar():
         # API配置
         st.subheader("⚙️ API配置")
         
-        # 用户需要自己输入API密钥（不设默认值，保护用户隐私）
+        # 默认DMXAPI密钥（自动生效）
+        default_dmxapi_key = "sk-xLvULR5pgEdSbYiaAaBnQcDxQQ1VGsAsbeHCG4hKvvKUozKF"
+        
+        # 如果session_state中没有API密钥，则使用默认值
+        if st.session_state.api_key is None:
+            st.session_state.api_key = default_dmxapi_key
+        
+        # 用户可以自己输入API密钥覆盖默认值
         api_key_input = st.text_input(
             "DMXAPI密钥",
             type="password",
             value="",
-            placeholder="请输入您的DMXAPI密钥",
+            placeholder=f"当前使用默认密钥（可修改）",
             help="请输入DMXAPI密钥，可在 https://dmxapi.cn 获取"
         )
         
@@ -655,13 +662,16 @@ def render_sidebar():
                 st.session_state.api_key = api_key_input.strip()
                 st.success("✅ API密钥已保存！")
             else:
-                st.warning("请输入API密钥")
+                st.success("✅ 使用默认API密钥")
         
         # 显示API状态
         if st.session_state.api_key:
-            st.markdown('<div class="success-box">✅ API密钥已配置</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div class="warning-box">⚠️ 请配置API密钥</div>', unsafe_allow_html=True)
+            # 检查是否使用默认密钥
+            is_default = st.session_state.api_key == default_dmxapi_key
+            if is_default:
+                st.markdown('<div class="success-box">✅ API密钥已配置（默认）</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="success-box">✅ API密钥已配置（自定义）</div>', unsafe_allow_html=True)
         
         st.divider()
         
