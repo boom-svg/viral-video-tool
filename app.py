@@ -647,8 +647,67 @@ def get_dmxclient():
         return None
 
 
+def compress_audio(audio_path: str, max_size_mb: float = 2.0) -> str:
+    """压缩音频文件以加快上传速度
+    
+    参数:
+        audio_path: 原始音频文件路径
+        max_size_mb: 目标最大文件大小(MB)
+    
+    返回:
+        压缩后的音频文件路径
+    """
+    import os
+    from pydub import AudioSegment
+    
+    # 获取文件大小
+    file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+    
+    # 如果文件小于阈值，直接返回原文件
+    if file_size_mb <= max_size_mb:
+        return audio_path
+    
+    print(f"原始文件大小: {file_size_mb:.2f}MB，开始压缩...")
+    
+    try:
+        # 加载音频
+        audio = AudioSegment.from_file(audio_path)
+        
+        # 转换为16kHz，单声道，96kbps (Whisper优化参数)
+        audio = audio.set_frame_rate(16000)
+        audio = audio.set_channels(1)
+        
+        # 逐步降低比特率直到文件大小合适
+        bitrate_options = ['96k', '64k', '48k', '32k']
+        
+        compressed_path = audio_path
+        for bitrate in bitrate_options:
+            # 导出为MP3
+            compressed_path = audio_path.rsplit('.', 1)[0] + '_compressed.mp3'
+            audio.export(compressed_path, format='mp3', bitrate=bitrate)
+            
+            new_size_mb = os.path.getsize(compressed_path) / (1024 * 1024)
+            print(f"压缩后 ({bitrate}): {new_size_mb:.2f}MB")
+            
+            if new_size_mb <= max_size_mb:
+                # 删除原文件
+                if audio_path != compressed_path:
+                    try:
+                        os.unlink(audio_path)
+                    except:
+                        pass
+                return compressed_path
+        
+        # 如果还是太大，返回最小的版本
+        return compressed_path
+        
+    except Exception as e:
+        print(f"压缩失败: {str(e)}")
+        return audio_path  # 返回原文件
+
+
 def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
-    """使用DMXAPI Whisper转写音频（仅支持音频文件）"""
+    """使用DMXAPI Whisper转写音频（仅支持音频文件，自动压缩优化）"""
     try:
         import tempfile
         import os
@@ -671,6 +730,13 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
             audio_path = tmp.name
         
         try:
+            # ===== 自动压缩音频 =====
+            original_size = os.path.getsize(audio_path) / (1024 * 1024)
+            if original_size > 0.1:  # 大于100KB的音频才需要压缩
+                audio_path = compress_audio(audio_path, max_size_mb=2.0)
+                compressed_size = os.path.getsize(audio_path) / (1024 * 1024)
+                print(f"音频压缩完成: {original_size:.2f}MB -> {compressed_size:.2f}MB")
+            
             filename_only = os.path.basename(audio_path)
             
             # MIME类型映射
@@ -680,7 +746,8 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
                 'm4a': 'audio/mp4',
                 'flac': 'audio/flac',
                 'aac': 'audio/aac',
-                'ogg': 'audio/ogg'
+                'ogg': 'audio/ogg',
+                'compressed.mp3': 'audio/mpeg'  # 压缩后的MP3
             }
             mime_type = mime_types.get(ext, 'audio/mpeg')
             
@@ -761,7 +828,7 @@ def render_file_uploader():
         "选择音频文件（支持多个文件）",
         type=['mp3', 'wav', 'm4a'],
         accept_multiple_files=True,
-        help="支持MP3、WAV、M4A音频格式。视频文件请先用其他工具转换为音频后再上传。"
+        help="支持MP3、WAV、M4A音频格式。视频文件请先用其他工具转换为音频后再上传。\n\n🔧 系统会自动压缩大文件（16kHz单声道，96kbps）以加快转写速度。"
     )
     
     if uploaded_files:
