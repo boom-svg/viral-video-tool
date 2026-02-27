@@ -330,6 +330,133 @@ background: rgba(77,107,254,0.1);
 </style>
 """, unsafe_allow_html=True)
 
+# ==================== 浏览器端音频压缩 ====================
+def render_audio_compressor():
+    """渲染浏览器端音频压缩器"""
+    st.markdown("""
+    <script>
+    // 浏览器端音频压缩函数
+    async function compressAudioFile(file, targetSampleRate = 16000, targetChannels = 1) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    const arrayBuffer = e.target.result;
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    
+                    // 计算新长度
+                    const frameCount = Math.floor(audioBuffer.length * targetSampleRate / audioBuffer.sampleRate);
+                    
+                    // 创建新的 AudioBuffer
+                    const compressedBuffer = audioContext.createBuffer(
+                        targetChannels,
+                        frameCount,
+                        targetSampleRate
+                    );
+                    
+                    // 混合声道（如果是多声道转单声道）
+                    if (targetChannels === 1 && audioBuffer.numberOfChannels > 1) {
+                        const channelData = [];
+                        for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+                            channelData.push(audioBuffer.getChannelData(c));
+                        }
+                        
+                        const mixedData = new Float32Array(frameCount);
+                        for (let i = 0; i < frameCount; i++) {
+                            let sum = 0;
+                            for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+                                const sourceRate = audioBuffer.sampleRate;
+                                const sourceIndex = i * sourceRate / targetSampleRate;
+                                const idx = Math.floor(sourceIndex);
+                                if (idx < channelData[c].length) {
+                                    sum += channelData[c][idx];
+                                }
+                            }
+                            mixedData[i] = sum / audioBuffer.numberOfChannels;
+                        }
+                        compressedBuffer.copyToChannel(mixedData, 0);
+                    } else {
+                        // 直接重采样
+                        for (let c = 0; c < Math.min(targetChannels, audioBuffer.numberOfChannels); c++) {
+                            const sourceData = audioBuffer.getChannelData(c);
+                            const targetData = compressedBuffer.getChannelData(c);
+                            for (let i = 0; i < frameCount; i++) {
+                                const sourceIndex = i * audioBuffer.sampleRate / targetSampleRate;
+                                const idx = Math.floor(sourceIndex);
+                                targetData[i] = sourceData[idx] || 0;
+                            }
+                        }
+                    }
+                    
+                    // 转换为 WAV 格式
+                    const wavBlob = audioBufferToWav(compressedBuffer);
+                    resolve(wavBlob);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = reject;
+            reader.readAsArrayBuffer(file);
+        });
+    }
+    
+    // AudioBuffer 转 WAV
+    function audioBufferToWav(buffer) {
+        const numChannels = buffer.numberOfChannels;
+        const sampleRate = buffer.sampleRate;
+        const format = 1; // PCM
+        const bitDepth = 16;
+        
+        const bytesPerSample = bitDepth / 8;
+        const blockAlign = numChannels * bytesPerSample;
+        
+        const dataLength = buffer.length * blockAlign;
+        const bufferLength = 44 + dataLength;
+        
+        const arrayBuffer = new ArrayBuffer(bufferLength);
+        const view = new DataView(arrayBuffer);
+        
+        // WAV 头
+        writeString(view, 0, 'RIFF');
+        view.setUint32(4, 36 + dataLength, true);
+        writeString(view, 8, 'WAVE');
+        writeString(view, 12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, format, true);
+        view.setUint16(22, numChannels, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * blockAlign, true);
+        view.setUint16(32, blockAlign, true);
+        view.setUint16(34, bitDepth, true);
+        writeString(view, 36, 'data');
+        view.setUint32(40, dataLength, true);
+        
+        // 写入音频数据
+        let offset = 44;
+        for (let i = 0; i < buffer.length; i++) {
+            for (let ch = 0; ch < numChannels; ch++) {
+                const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+                const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(offset, int16, true);
+                offset += 2;
+            }
+        }
+        
+        return new Blob([arrayBuffer], { type: 'audio/wav' });
+    }
+    
+    function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+    
+    // 全局函数，供 HTML 调用
+    window.compressAudioFile = compressAudioFile;
+    </script>
+    """, unsafe_allow_html=True)
+
 # ==================== 状态初始化 ====================
 def init_session_state():
     """初始化所有会话状态变量"""
@@ -622,12 +749,13 @@ def get_dmxclient():
         return None
 
 
-def compress_audio(audio_path: str, max_size_mb: float = 2.0) -> str:
+def compress_audio(audio_path: str, max_size_mb: float = 2.0, force_compress: bool = False) -> str:
     """压缩音频文件以加快上传速度
     
     参数:
         audio_path: 原始音频文件路径
         max_size_mb: 目标最大文件大小(MB)
+        force_compress: 是否强制压缩
     
     返回:
         压缩后的音频文件路径
@@ -637,8 +765,8 @@ def compress_audio(audio_path: str, max_size_mb: float = 2.0) -> str:
     # 获取文件大小
     file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
     
-    # 如果文件小于阈值，直接返回原文件
-    if file_size_mb <= max_size_mb:
+    # 如果文件小于阈值且不强制压缩，直接返回原文件
+    if file_size_mb <= max_size_mb and not force_compress:
         return audio_path
     
     print(f"原始文件大小: {file_size_mb:.2f}MB，开始压缩...")
@@ -711,10 +839,10 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
             audio_path = tmp.name
         
         try:
-            # ===== 自动压缩音频 =====
+            # ===== 自动压缩音频（强制压缩以加快上传）=====
             original_size = os.path.getsize(audio_path) / (1024 * 1024)
-            if original_size > 0.1:  # 大于100KB的音频才需要压缩
-                audio_path = compress_audio(audio_path, max_size_mb=2.0)
+            if original_size > 0.05:  # 大于50KB的音频都进行压缩
+                audio_path = compress_audio(audio_path, max_size_mb=1.0, force_compress=True)
                 compressed_size = os.path.getsize(audio_path) / (1024 * 1024)
                 print(f"音频压缩完成: {original_size:.2f}MB -> {compressed_size:.2f}MB")
             
