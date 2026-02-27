@@ -687,11 +687,9 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
             # 调用Whisper API转写
             url = f"{DMXAPI_BASE_URL}/audio/transcriptions"
             
-            # 尝试不同模型
+            # DMXAPI支持的Whisper模型 - 只使用官方whisper-1模型
             model_options = [
-                'gpt-4o-mini-transcribe',
-                'gpt-4o-transcribe',
-                'whisper-1'
+                'whisper-1'  # 官方 Whisper 模型
             ]
             
             for model_name in model_options:
@@ -708,14 +706,14 @@ def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
                         result = response.json()
                         print(f"转写成功，使用模型: {model_name}")
                         return {'success': True, 'text': result.get('text', ''), 'filename': filename, 'model': model_name}
-                    elif response.status_code == 400:
-                        continue
                     else:
-                        return {'success': False, 'error': f"API错误 {response.status_code}: {response.text[:200]}", 'filename': filename}
+                        # 直接返回错误信息
+                        error_msg = response.text if response.text else f"HTTP {response.status_code}"
+                        return {'success': False, 'error': f"API错误: {error_msg}", 'filename': filename}
                 except Exception as e:
-                    continue
+                    return {'success': False, 'error': str(e), 'filename': filename}
             
-            return {'success': False, 'error': "所有模型都失败，请检查API密钥是否正确", 'filename': filename}
+            return {'success': False, 'error': "转写失败，请检查API密钥是否正确", 'filename': filename}
                 
         finally:
             try:
