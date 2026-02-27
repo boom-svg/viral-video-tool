@@ -817,88 +817,90 @@ def compress_audio(audio_path: str, max_size_mb: float = 2.0, force_compress: bo
 
 def transcribe_audio(file_data: bytes, filename: str, client) -> dict:
     """使用DMXAPI Whisper转写音频（仅支持音频文件，自动压缩优化）"""
+    import tempfile
+    import os
+    
+    # 获取文件扩展名
+    ext = filename.split('.')[-1].lower()
+    
+    # 检查是否为支持的音频格式
+    audio_exts = ['mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg']
+    if ext not in audio_exts:
+        return {
+            'success': False,
+            'error': f"不支持的文件格式: {ext}。请上传MP3、WAV、M4A等音频文件。",
+            'filename': filename
+        }
+    
+    # 创建临时文件
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
+        tmp.write(file_data)
+        audio_path = tmp.name
+    
     try:
-        import tempfile
-        import os
+        original_size = os.path.getsize(audio_path) / (1024 * 1024)
+        print(f"原始文件大小: {original_size:.2f}MB")
         
-        # 获取文件扩展名
-        ext = filename.split('.')[-1].lower()
+        # ===== 尝试压缩音频 =====
+        compression_works = False
+        try:
+            audio_path = compress_audio(audio_path, max_size_mb=1.0, force_compress=True)
+            compressed_size = os.path.getsize(audio_path) / (1024 * 1024)
+            print(f"音频压缩完成: {original_size:.2f}MB -> {compressed_size:.2f}MB")
+            compression_works = True
+        except Exception as e:
+            print(f"压缩失败，使用原文件: {str(e)}")
+            # 压缩失败时使用原文件
         
-        # 检查是否为支持的音频格式
-        audio_exts = ['mp3', 'wav', 'm4a', 'flac', 'aac', 'ogg']
-        if ext not in audio_exts:
-            return {
-                'success': False,
-                'error': f"不支持的文件格式: {ext}。请上传MP3、WAV、M4A等音频文件。",
-                'filename': filename
-            }
+        # 确定最终的文件名和MIME类型
+        final_ext = audio_path.split('.')[-1].lower()
+        filename_only = os.path.basename(audio_path)
         
-        # 创建临时文件
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as tmp:
-            tmp.write(file_data)
-            audio_path = tmp.name
+        mime_types = {
+            'mp3': 'audio/mpeg',
+            'wav': 'audio/wav',
+            'm4a': 'audio/mp4',
+            'flac': 'audio/flac',
+            'aac': 'audio/aac',
+            'ogg': 'audio/ogg',
+        }
+        mime_type = mime_types.get(final_ext, 'audio/mpeg')
+        
+        # 调用Whisper API转写
+        url = f"{DMXAPI_BASE_URL}/audio/transcriptions"
+        
+        print(f"开始转写: {filename}")
         
         try:
-            # ===== 自动压缩音频（强制压缩以加快上传）=====
-            original_size = os.path.getsize(audio_path) / (1024 * 1024)
-            if original_size > 0.05:  # 大于50KB的音频都进行压缩
-                audio_path = compress_audio(audio_path, max_size_mb=1.0, force_compress=True)
-                compressed_size = os.path.getsize(audio_path) / (1024 * 1024)
-                print(f"音频压缩完成: {original_size:.2f}MB -> {compressed_size:.2f}MB")
+            with open(audio_path, 'rb') as f:
+                files = {
+                    'file': (filename_only, f, mime_type),
+                    'model': (None, 'whisper-1')
+                }
+                headers = {'Authorization': f'Bearer {st.session_state.api_key}'}
+                response = requests.post(url, files=files, headers=headers, timeout=300)
             
-            filename_only = os.path.basename(audio_path)
-            
-            # MIME类型映射
-            mime_types = {
-                'mp3': 'audio/mpeg',
-                'wav': 'audio/wav',
-                'm4a': 'audio/mp4',
-                'flac': 'audio/flac',
-                'aac': 'audio/aac',
-                'ogg': 'audio/ogg',
-                'compressed.mp3': 'audio/mpeg'  # 压缩后的MP3
-            }
-            mime_type = mime_types.get(ext, 'audio/mpeg')
-            
-            # 调用Whisper API转写
-            url = f"{DMXAPI_BASE_URL}/audio/transcriptions"
-            
-            # DMXAPI支持的Whisper模型 - 只使用官方whisper-1模型
-            model_options = [
-                'whisper-1'  # 官方 Whisper 模型
-            ]
-            
-            for model_name in model_options:
-                try:
-                    with open(audio_path, 'rb') as f:
-                        files = {
-                            'file': (filename_only, f, mime_type),
-                            'model': (None, model_name)
-                        }
-                        headers = {'Authorization': f'Bearer {st.session_state.api_key}'}
-                        response = requests.post(url, files=files, headers=headers, timeout=180)
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        print(f"转写成功，使用模型: {model_name}")
-                        return {'success': True, 'text': result.get('text', ''), 'filename': filename, 'model': model_name}
-                    else:
-                        # 直接返回错误信息
-                        error_msg = response.text if response.text else f"HTTP {response.status_code}"
-                        return {'success': False, 'error': f"API错误: {error_msg}", 'filename': filename}
-                except Exception as e:
-                    return {'success': False, 'error': str(e), 'filename': filename}
-            
-            return {'success': False, 'error': "转写失败，请检查API密钥是否正确", 'filename': filename}
+            if response.status_code == 200:
+                result = response.json()
+                print(f"转写成功: {filename}")
+                return {'success': True, 'text': result.get('text', ''), 'filename': filename, 'model': 'whisper-1'}
+            else:
+                error_msg = response.text if response.text else f"HTTP {response.status_code}"
+                print(f"API错误: {error_msg}")
+                return {'success': False, 'error': f"API错误: {error_msg}", 'filename': filename}
+        except Exception as e:
+            print(f"转写异常: {str(e)}")
+            return {'success': False, 'error': f"转写异常: {str(e)}", 'filename': filename}
                 
-        finally:
-            try:
-                os.unlink(audio_path)
-            except:
-                pass
-            
     except Exception as e:
+        print(f"转写失败: {str(e)}")
         return {'success': False, 'error': str(e), 'filename': filename}
+            
+    finally:
+        try:
+            os.unlink(audio_path)
+        except:
+            pass
 
 
 def render_file_uploader():
@@ -974,17 +976,22 @@ def render_file_uploader():
             if st.button("🔄 全部转写", type="primary", use_container_width=True):
                 if not st.session_state.api_key:
                     st.error("请先在侧边栏配置API密钥！")
+                    time.sleep(2)
                     return
                 
                 # 初始化客户端
                 client = get_dmxclient()
                 if not client:
-                    st.error("API客户端初始化失败！")
+                    st.error("API客户端初始化失败！请检查API密钥。")
+                    time.sleep(2)
                     return
                 
                 # 转写所有文件
                 progress_bar = st.progress(0)
                 status_text = st.empty()
+                
+                # 收集错误信息
+                errors = []
                 
                 for i, file in enumerate(uploaded_files):
                     file_id = f"file_{i}_{file.name}"
@@ -1008,14 +1015,26 @@ def render_file_uploader():
                             'size': len(file_data),
                             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                         }
+                        st.success(f"✅ {file.name} 转写成功")
                     else:
-                        st.error(f"转写失败: {result['error']}")
+                        error_msg = f"❌ {file.name}: {result['error']}"
+                        errors.append(error_msg)
+                        st.error(error_msg)
                     
                     # 更新进度
                     progress_bar.progress((i + 1) / len(uploaded_files))
                 
                 status_text.text("转写完成！")
-                time.sleep(0.5)
+                
+                # 如果有错误，显示详细信息
+                if errors:
+                    with st.expander("查看错误详情", expanded=True):
+                        for err in errors:
+                            st.markdown(f"- {err}")
+                    time.sleep(3)  # 让用户看到错误
+                else:
+                    time.sleep(0.5)
+                
                 status_text.empty()
                 progress_bar.empty()
                 
