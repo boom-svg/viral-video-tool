@@ -225,6 +225,44 @@ background: rgba(77,107,254,0.1);
         transition: all 200ms ease;
     }
     
+    /* 输入框 placeholder 文字颜色 */
+    .stTextInput input::placeholder,
+    .stTextArea textarea::placeholder {
+        color: #9ca3af !important;
+        opacity: 1 !important;
+        font-size: 14px !important;
+    }
+    
+    /* 调亮标签文字颜色 */
+    .stRadio > label,
+    .stCheckbox > label,
+    .stSlider > label {
+        color: #d1d5db !important;
+        font-weight: 500 !important;
+    }
+    
+    /* radio 选项文字 */
+    .stRadio span {
+        color: #d1d5db !important;
+    }
+    
+    /* expander 标题调亮 */
+    .streamlit-expanderHeader {
+        color: #e5e7eb !important;
+    }
+    
+    /* markdown 辅助文字调亮 */
+    .stMarkdown p,
+    .stMarkdown small {
+        color: #9ca3af !important;
+    }
+    
+    /* 调亮 placeholder 背景 */
+    .stTextInput > div > div,
+    .stTextArea > div > div {
+        background: #0d1117 !important;
+    }
+    
     .stTextInput > div > div > input:focus,
     .stTextArea > div > div > textarea:focus {
         border-color: var(--accent-blue);
@@ -1310,13 +1348,6 @@ def render_main_area():
                 st.markdown(f"**⏱️ 总时长：**{script['total_duration']}")
             st.divider()
             
-            # 脚本基本信息
-            if 'title' in script:
-                st.markdown(f"**📌 脚本标题：**{script['title']}")
-            if 'total_duration' in script:
-                st.markdown(f"**⏱️ 总时长：**{script['total_duration']}")
-            st.divider()
-            
             # 场景列表 - 使用st.expander提高性能
             st.markdown(f"**📋 场景列表（共{len(segments)}个）**")
             
@@ -1364,8 +1395,10 @@ def render_main_area():
                     
                     with col_gen:
                         st.markdown("**🎨 AI生成图片**")
-                        gen_count = st.radio("数量", [1, 2], index=1, key=f"gen_count_{idx}", horizontal=True)
-                        if st.button(f"🎨 生成{gen_count}张图片", key=f"gen_assets_{idx}", use_container_width=True):
+                        gen_count = st.radio(" ", ["1张", "2张"], index=1, key=f"gen_count_{idx}", horizontal=True)
+                        # 提取数字
+                        gen_count_num = int(gen_count.replace("张", ""))
+                        if st.button(f"🎨 生成{gen_count_num}张图片", key=f"gen_assets_{idx}", use_container_width=True):
                             if not st.session_state.api_key:
                                 st.error("请先配置API密钥")
                             else:
